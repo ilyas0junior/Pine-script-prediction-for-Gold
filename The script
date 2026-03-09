@@ -1,0 +1,136 @@
+//@version=5
+indicator("Gold Perfect Entry Signals", overlay=true)
+
+// Inputs
+fast_ema = input.int(8, "Fast EMA")
+slow_ema = input.int(21, "Slow EMA")
+rsi_period = input.int(14, "RSI Period")
+show_alerts = input.bool(true, "Show Entry Alerts")
+
+// Calculate indicators
+ema_fast = ta.ema(close, fast_ema)
+ema_slow = ta.ema(close, slow_ema)
+rsi = ta.rsi(close, rsi_period)
+atr = ta.atr(14)
+
+// Support and Resistance
+support = ta.lowest(low, 20)
+resistance = ta.highest(high, 20)
+
+// Trend detection
+trend_up = ema_fast > ema_slow and close > ema_slow
+trend_down = ema_fast < ema_slow and close < ema_slow
+
+// Entry Conditions - PERFECT LONG
+perfect_long = 
+  trend_up and
+  ta.crossover(ema_fast, ema_slow) and
+  rsi > 45 and rsi < 65 and
+  low <= support * 1.001 and
+  close > open and
+  volume > ta.sma(volume, 20)
+
+// Entry Conditions - PERFECT SHORT
+perfect_short = 
+  trend_down and
+  ta.crossunder(ema_fast, ema_slow) and
+  rsi < 55 and rsi > 35 and
+  high >= resistance * 0.999 and
+  close < open and
+  volume > ta.sma(volume, 20)
+
+// Plot Entry Signals
+plotshape(perfect_long, "Perfect Long", shape.triangleup, location.belowbar, color=color.green, size=size.normal)
+plotshape(perfect_short, "Perfect Short", shape.triangledown, location.abovebar, color=color.red, size=size.normal)
+
+// Plot Entry Price Levels
+var float long_entry_price = na
+var float short_entry_price = na
+
+if perfect_long
+    long_entry_price := close
+    short_entry_price := na
+    
+if perfect_short
+    short_entry_price := close
+    long_entry_price := na
+
+plot(long_entry_price, "Long Entry Level", color=color.green, style=plot.style_circles, linewidth=2)
+plot(short_entry_price, "Short Entry Level", color=color.red, style=plot.style_circles, linewidth=2)
+
+// Suggested TP/SL Levels
+long_tp = long_entry_price * 1.0010  // 10 pips TP
+long_sl = long_entry_price * 0.9980  // 20 pips SL
+
+short_tp = short_entry_price * 0.9990  // 10 pips TP  
+short_sl = short_entry_price * 1.0020  // 20 pips SL
+
+plot(perfect_long ? long_tp : na, "Long TP", color=color.lime, style=plot.style_circles)
+plot(perfect_long ? long_sl : na, "Long SL", color=color.maroon, style=plot.style_circles)
+
+plot(perfect_short ? short_tp : na, "Short TP", color=color.lime, style=plot.style_circles) 
+plot(perfect_short ? short_sl : na, "Short SL", color=color.maroon, style=plot.style_circles)
+
+// Background highlights for perfect setups
+bgcolor(perfect_long ? color.new(color.green, 90) : perfect_short ? color.new(color.red, 90) : na)
+
+// Alerts
+alertcondition(perfect_long and show_alerts, "PERFECT LONG ENTRY - GOLD", "Perfect long entry signal on Gold")
+alertcondition(perfect_short and show_alerts, "PERFECT SHORT ENTRY - GOLD", "Perfect short entry signal on Gold")
+
+// Info Table - FIXED (no colspan)
+var table info_table = table.new(position.top_right, 2, 11, bgcolor=color.white, border_width=1)
+
+if barstate.islast
+    table.cell(info_table, 0, 0, "GOLD ENTRY", bgcolor=color.yellow, text_color=color.black)
+    table.cell(info_table, 1, 0, "SIGNALS", bgcolor=color.yellow, text_color=color.black)
+    
+    table.cell(info_table, 0, 1, "Price:", bgcolor=color.gray)
+    table.cell(info_table, 1, 1, str.tostring(close, "#.##"), bgcolor=color.gray)
+    
+    table.cell(info_table, 0, 2, "Trend:", bgcolor=color.gray)
+    table.cell(info_table, 1, 2, trend_up ? "BULLISH" : trend_down ? "BEARISH" : "RANGING", 
+              bgcolor=trend_up ? color.green : trend_down ? color.red : color.orange)
+    
+    table.cell(info_table, 0, 3, "RSI:", bgcolor=color.gray)
+    table.cell(info_table, 1, 3, str.tostring(rsi, "#"), 
+              bgcolor=rsi > 70 ? color.red : rsi < 30 ? color.green : color.blue)
+    
+    table.cell(info_table, 0, 4, "EMA Cross:", bgcolor=color.gray)
+    table.cell(info_table, 1, 4, ema_fast > ema_slow ? "FAST > SLOW" : "FAST < SLOW", 
+              bgcolor=ema_fast > ema_slow ? color.green : color.red)
+    
+    table.cell(info_table, 0, 5, "Near S/R:", bgcolor=color.gray)
+    table.cell(info_table, 1, 5, math.abs(close - support) < atr ? "SUPPORT" : math.abs(close - resistance) < atr ? "RESISTANCE" : "MID-RANGE", 
+              bgcolor=math.abs(close - support) < atr ? color.green : math.abs(close - resistance) < atr ? color.red : color.gray)
+    
+    table.cell(info_table, 0, 6, "Volume:", bgcolor=color.gray)
+    table.cell(info_table, 1, 6, volume > ta.sma(volume, 20) ? "HIGH" : "LOW",  bgcolor=volume > ta.sma(volume, 20) ? color.green : color.gray)
+    
+    table.cell(info_table, 0, 7, "LONG Signal:", bgcolor=color.gray)
+    table.cell(info_table, 1, 7, perfect_long ? "ACTIVE NOW!" : "INACTIVE", 
+              bgcolor=perfect_long ? color.green : color.gray)
+    
+    table.cell(info_table, 0, 8, "SHORT Signal:", bgcolor=color.gray)
+    table.cell(info_table, 1, 8, perfect_short ? "ACTIVE NOW!" : "INACTIVE", 
+              bgcolor=perfect_short ? color.red : color.gray)
+    
+    table.cell(info_table, 0, 9, "TP/SL:", bgcolor=color.gray)
+    table.cell(info_table, 1, 9, "10/20 pips", bgcolor=color.blue)
+
+// Plot EMAs for visual reference
+plot(ema_fast, "Fast EMA", color=color.blue, linewidth=1)
+plot(ema_slow, "Slow EMA", color=color.orange, linewidth=2)
+
+// Plot Support/Resistance
+plot(support, "Support", color=color.green, style=plot.style_line, linewidth=1)
+plot(resistance, "Resistance", color=color.red, style=plot.style_line, linewidth=1)
+
+// Add labels for current signals
+if perfect_long
+    label.new(bar_index, low, "LONG ENTRY\nTP: " + str.tostring(long_tp, "#.##") + "\nSL: " + str.tostring(long_sl, "#.##"), 
+              color=color.green, textcolor=color.white, style=label.style_label_up, yloc=yloc.belowbar)
+    
+if perfect_short
+    label.new(bar_index, high, "SHORT ENTRY\nTP: " + str.tostring(short_tp, "#.##") + "\nSL: " + str.tostring(short_sl, "#.##"), 
+              color=color.red, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar)
