@@ -1,0 +1,299 @@
+//@version=5
+strategy("XAU/USD Professional Predictive System", 
+         overlay=true, 
+         initial_capital=100000, 
+         default_qty_type=strategy.percent_of_equity,
+         default_qty_value=2,  // 2% risk per trade
+         commission_type=strategy.commission.percent,
+         commission_value=0.05,  // 5bps commission
+         slippage=2,  // 2 pip slippage assumption
+         pyramiding=0)  // No pyramiding for forward test
+
+// === PROFESSIONAL INPUT PARAMETERS ===
+// Risk Management
+risk_percent = input.float(1.0, "Risk % Per Trade", minval=0.5, maxval=3.0, step=0.25)
+max_spread = input.float(0.5, "Max Spread (pips)", minval=0.1, maxval=2.0)
+min_volume = input.float(0.5, "Min Volume Ratio", minval=0.3, maxval=2.0)
+
+// Technical Parameters
+fast_ema_len = input.int(9, "Fast EMA", minval=5, maxval=20)
+slow_ema_len = input.int(21, "Slow EMA", minval=15, maxval=50)
+rsi_len = input.int(14, "RSI Length", minval=7, maxval=21)
+atr_len = input.int(14, "ATR Length", minval=7, maxval=28)
+adx_len = input.int(14, "ADX Length", minval=7, maxval=28)
+
+// Session Filters (Critical for Gold)
+trade_london = input.bool(true, "Trade London Session (08:00-17:00 GMT)")
+trade_ny = input.bool(true, "Trade NY Session (13:00-22:00 GMT)")
+trade_asia = input.bool(false, "Trade Asia Session (00:00-09:00 GMT)")
+
+// Advanced Filters
+use_volatility_filter = input.bool(true, "Use Volatility Filter")
+use_trend_strength_filter = input.bool(true, "Use Trend Strength Filter")
+use_market_regime_filter = input.bool(true, "Use Market Regime Filter")
+
+// === PROFESSIONAL INDICATOR CALCULATIONS ===
+// Core Indicators
+ema_fast = ta.ema(close, fast_ema_len)
+ema_slow = ta.ema(close, slow_ema_len)
+rsi = ta.rsi(close, rsi_len)
+atr = ta.atr(atr_len)
+adx = ta.adx(high, low, close, adx_len)
+volume_ma = ta.sma(volume, 20)
+
+// Advanced Indicators
+// MACD for momentum confirmation
+[macd_line, signal_line, _] = ta.macd(close, 12, 26, 9)
+
+// Bollinger Bands for volatility
+bb_middle = ta.sma(close, 20)
+bb_std = ta.stdev(close, 20)
+bb_upper = bb_middle + (bb_std * 2)
+bb_lower = bb_middle - (bb_std * 2)
+
+// Ichimoku for trend context
+tenkan = (ta.highest(high, 9) + ta.lowest(low, 9)) / 2
+kijun = (ta.highest(high, 26) + ta.lowest(low, 26)) / 2
+
+// Support & Resistance (Dynamic)
+pivot_high = ta.pivothigh(high, 5, 5)
+pivot_low = ta.pivotlow(low, 5, 5)
+var float[] resistances = array.new_float(0)
+var float[] supports = array.new_float(0)
+
+// Dynamic S/R levels
+if not na(pivot_high)
+    array.push(resistances, pivot_high)
+    if array.size(resistances) > 10
+        array.shift(resistances)
+        
+if not na(pivot_low)
+    array.push(supports, pivot_low)
+    if array.size(supports) > 10
+        array.shift(supports)
+
+// === MARKET SESSION DETECTION ===
+is_london = time(timeframe.period, "0800-1700:GMT")
+is_ny = time(timeframe.period, "1300-2200:GMT")
+is_asia = time(timeframe.period, "0000-0900:GMT")
+
+valid_session = (trade_london and is_london) or (trade_ny and is_ny) or (trade_asia and is_asia)
+
+// === VOLATILITY REGIME DETECTION ===
+volatility_regime = atr / ta.sma(atr, 50)
+is_high_volatility = volatility_regime > 1.3
+is_low_volatility = volatility_regime < 0.7
+is_normal_volatility = not is_high_volatility and not is_low_volatility
+
+// === TREND STRENGTH FILTER ===
+strong_trend = adx > 25
+weak_trend = adx < 20
+trend_direction = ema_fast > ema_slow ? 1 : -1
+
+// === MARKET REGIME DETECTION ===
+// Using ADX + BB width for regime classification
+bb_width = (bb_upper - bb_lower) / bb_middle * 100
+is_trending = adx > 30 and bb_width < 5
+is_ranging = adx < 20 and bb_width > 8
+is_volatile_expanding = adx > 35 and bb_width > 6
+
+// === ENTRY CONDITIONS - LONG ===
+// Primary conditions
+trend_aligned = ema_fast > ema_slow and close > ema_slow
+momentum_positive = rsi > 45 and rsi < 65 and macd_line > signal_line
+volume_confirmation = volume > volume_ma * min_volume
+
+// Price action conditions
+price_near_support = false
+for i = 0 to array.size(supports) - 1
+    support_level = array.get(supports, i)
+    if math.abs(close - support_level) / close < 0.002  // Within 0.2% of support
+        price_near_support := true
+        break
+
+// Ichimoku confirmation
+ichimoku_bullish = close > tenkan and tenkan > kijun and close > bb_middle
+
+// Professional long entry
+long_entry = trend_aligned and 
+             momentum_positive and 
+             volume_confirmation and 
+             price_near_support and
+             ichimoku_bullish and
+             valid_session and
+             (not use_volatility_filter or is_normal_volatility) and
+             (not use_trend_strength_filter or strong_trend) and
+             (not use_market_regime_filter or is_trending)
+
+// === ENTRY CONDITIONS - SHORT ===
+// Primary conditions
+trend_bearish = ema_fast < ema_slow and close < ema_slow
+momentum_negative = rsi < 55 and rsi > 35 and macd_line < signal_line
+
+// Price near resistance
+price_near_resistance = false
+for i = 0 to array.size(resistances) - 1
+    resistance_level = array.get(resistances, i)
+    if math.abs(close - resistance_level) / close < 0.002  // Within 0.2% of resistance
+        price_near_resistance := true
+        break
+
+// Ichimoku bearish confirmation
+ichimoku_bearish = close < tenkan and tenkan < kijun and close < bb_middle
+
+// Professional short entry
+short_entry = trend_bearish and 
+              momentum_negative and 
+              volume_confirmation and 
+              price_near_resistance and
+              ichimoku_bearish and
+              valid_session and
+              (not use_volatility_filter or is_normal_volatility) and
+              (not use_trend_strength_filter or strong_trend) and
+              (not use_market_regime_filter or is_trending)
+
+// === DYNAMIC STOP LOSS & TAKE PROFIT ===
+// ATR-based stops (professional standard)
+atr_multiplier_sl = input.float(1.5, "ATR Multiplier SL", minval=1.0, maxval=3.0)
+atr_multiplier_tp1 = input.float(1.0, "ATR Multiplier TP1", minval=0.5, maxval=2.0)
+atr_multiplier_tp2 = input.float(2.0, "ATR Multiplier TP2", minval=1.0, maxval=4.0)
+
+// Calculate levels
+long_sl = close - (atr * atr_multiplier_sl)
+long_tp1 = close + (atr * atr_multiplier_tp1)
+long_tp2 = close + (atr * atr_multiplier_tp2)
+
+short_sl = close + (atr * atr_multiplier_sl)
+short_tp1 = close - (atr * atr_multiplier_tp1)
+short_tp2 = close - (atr * atr_multiplier_tp2)
+
+// Position sizing based on risk
+position_size = strategy.default_qty_value
+
+// === EXECUTION WITH PAPER TRADING LOGIC ===
+if long_entry and strategy.position_size == 0
+    strategy.entry("Long", strategy.long, qty=position_size)
+    strategy.exit("Long TP1", "Long", limit=long_tp1, qty_percent=50)
+    strategy.exit("Long TP2", "Long", limit=long_tp2, stop=long_sl)
+    
+if short_entry and strategy.position_size == 0
+    strategy.entry("Short", strategy.short, qty=position_size)
+    strategy.exit("Short TP1", "Short", limit=short_tp1, qty_percent=50)
+    strategy.exit("Short TP2", "Short", limit=short_tp2, stop=short_sl)
+
+// === PROFESSIONAL DASHBOARD ===
+// Create comprehensive info table
+var table dashboard = table.new(position.top_right, 4, 12, bgcolor=color.new(color.white, 90), border_width=1)
+
+if barstate.islast
+    // Header
+    table.cell(dashboard, 0, 0, "XAU/USD PRO", text_color=color.black, bgcolor=color.yellow, text_size=size.large)
+    table.cell(dashboard, 1, 0, "SYSTEM", text_color=color.black, bgcolor=color.yellow, text_size=size.large)
+    table.cell(dashboard, 2, 0, "STATUS", text_color=color.black, bgcolor=color.yellow, text_size=size.large)
+    table.cell(dashboard, 3, 0, "VALUE", text_color=color.black, bgcolor=color.yellow, text_size=size.large)
+    
+    // Market Data
+    table.cell(dashboard, 0, 1, "Price", text_color=color.white, bgcolor=color.gray)
+    table.cell(dashboard, 1, 1, str.tostring(close, "#.##"), text_color=color.white, bgcolor=color.gray)
+    table.cell(dashboard, 2, 1, "Spread", text_color=color.white, bgcolor=color.gray)
+    table.cell(dashboard, 3, 1, str.tostring((high-low)/close*10000, "#.#") + " pips", text_color=color.white, bgcolor=color.gray)
+    
+    // Regime
+    table.cell(dashboard, 0, 2, "Regime", text_color=color.white, bgcolor=color.gray)
+    regime_text = is_trending ? "TRENDING" : is_ranging ? "RANGING" : "MIXED"
+    regime_color = is_trending ? color.green : is_ranging ? color.orange : color.blue
+    table.cell(dashboard, 1, 2, regime_text, text_color=color.white, bgcolor=regime_color)
+    table.cell(dashboard, 2, 2, "ADX", text_color=color.white, bgcolor=color.gray)
+    table.cell(dashboard, 3, 2, str.tostring(adx, "#.#"), text_color=color.white, bgcolor=color.gray)
+    
+    // Session
+    table.cell(dashboard, 0, 3, "Session", text_color=color.white, bgcolor=color.gray)
+    session_text = is_london ? "LONDON" : is_ny ? "NEW YORK" : is_asia ? "ASIA" : "CLOSED"
+    session_color = valid_session ? color.green : color.red
+    table.cell(dashboard, 1, 3, session_text, text_color=color.white, bgcolor=session_color)
+    table.cell(dashboard, 2, 3, "ATR", text_color=color.white, bgcolor=color.gray)
+    table.cell(dashboard, 3, 3, str.tostring(atr, "#.##"), text_color=color.white, bgcolor=color.gray)
+    
+    // Signal Status
+    table.cell(dashboard, 0, 4, "Long Signal", text_color=color.white, bgcolor=color.gray)
+    table.cell(dashboard, 1, 4, long_entry ? "READY" : "WAIT", 
+              text_color=color.white, bgcolor=long_entry ? color.green : color.gray)
+    table.cell(dashboard, 2, 4, "Short Signal", text_color=color.white, bgcolor=color.gray)
+    table.cell(dashboard, 3, 4, short_entry ? "READY" : "WAIT", 
+              text_color=color.white, bgcolor=short_entry ? color.red : color.gray)
+    
+    // Trade Management
+    if strategy.position_size != 0
+        table.cell(dashboard, 0, 5, "Position", text_color=color.white, bgcolor=color.gray)
+        pos_text = strategy.position_size > 0 ? "LONG" : "SHORT"
+        pos_color = strategy.position_size > 0 ? color.green : color.red
+        table.cell(dashboard, 1, 5, pos_text, text_color=color.white, bgcolor=pos_color)
+        table.cell(dashboard, 2, 5, "P&L", text_color=color.white, bgcolor=color.gray)
+        pnl = strategy.openprofit
+        pnl_color = pnl > 0 ? color.green : color.red
+        table.cell(dashboard, 3, 5, str.tostring(pnl, "#"), text_color=color.white, bgcolor=pnl_color)
+        
+        // Show levels
+        table.cell(dashboard, 0, 6, "Entry", text_color=color.white, bgcolor=color.gray)
+        table.cell(dashboard, 1, 6, str.tostring(strategy.position_avg_price, "#.##"), 
+                  text_color=color.white, bgcolor=color.gray)
+        table.cell(dashboard, 2, 6, "Stop", text_color=color.white, bgcolor=color.gray)
+        stop_level = strategy.position_size > 0 ? long_sl : short_sl
+        table.cell(dashboard, 3, 6, str.tostring(stop_level, "#.##"), 
+                  text_color=color.white, bgcolor=color.gray)
+    
+    // Performance Metrics
+    table.cell(dashboard, 0, 7, "Win Rate", text_color=color.white, bgcolor=color.gray)
+    win_rate = strategy.wintrades / strategy.total_trades * 100
+    table.cell(dashboard, 1, 7, str.tostring(win_rate, "#.#") + "%", 
+              text_color=color.white, bgcolor=win_rate > 50 ? color.green : color.red)
+    table.cell(dashboard, 2, 7, "Trades", text_color=color.white, bgcolor=color.gray)
+    table.cell(dashboard, 3, 7, str.tostring(strategy.total_trades), 
+              text_color=color.white, bgcolor=color.gray)
+    
+    table.cell(dashboard, 0, 8, "Profit Factor", text_color=color.white, bgcolor=color.gray)
+    pf = strategy.grossprofit / math.abs(strategy.grossloss)
+    table.cell(dashboard, 1, 8, str.tostring(pf, "#.##"), 
+              text_color=color.white, bgcolor=pf > 1.5 ? color.green : color.orange)
+    table.cell(dashboard, 2, 8, "Max DD", text_color=color.white, bgcolor=color.gray)
+    table.cell(dashboard, 3, 8, str.tostring(strategy.max_drawdown, "#.#") + "%", 
+              text_color=color.white, bgcolor=color.gray)
+
+// === VISUAL SIGNALS ===
+// Plot entry signals
+plotshape(long_entry, "Long Signal", shape.triangleup, location.belowbar, 
+          color=color.new(color.green, 0), size=size.normal)
+plotshape(short_entry, "Short Signal", shape.triangledown, location.abovebar, 
+          color=color.new(color.red, 0), size=size.normal)
+
+// Plot EMAs
+plot(ema_fast, "Fast EMA", color=color.new(color.blue, 70), linewidth=1)
+plot(ema_slow, "Slow EMA", color=color.new(color.orange, 70), linewidth=2)
+
+// Plot dynamic levels when in position
+plot(strategy.position_size > 0 ? long_sl : na, "Stop Loss", 
+     color=color.new(color.red, 50), style=plot.style_linebr, linewidth=1)
+plot(strategy.position_size > 0 ? long_tp1 : na, "Take Profit 1", 
+     color=color.new(color.green, 50), style=plot.style_linebr, linewidth=1)
+plot(strategy.position_size > 0 ? long_tp2 : na, "Take Profit 2", 
+     color=color.new(color.lime, 50), style=plot.style_linebr, linewidth=1)
+
+plot(strategy.position_size < 0 ? short_sl : na, "Stop Loss Short", 
+     color=color.new(color.red, 50), style=plot.style_linebr, linewidth=1)
+plot(strategy.position_size < 0 ? short_tp1 : na, "Take Profit 1 Short", 
+     color=color.new(color.green, 50), style=plot.style_linebr, linewidth=1)
+plot(strategy.position_size < 0 ? short_tp2 : na, "Take Profit 2 Short", 
+     color=color.new(color.lime, 50), style=plot.style_linebr, linewidth=1)
+
+// === ALERTS FOR PAPER TRADING ===
+alertcondition(long_entry, "LONG SIGNAL", "XAU/USD Long entry signal with TP1: " + 
+              str.tostring(long_tp1) + " TP2: " + str.tostring(long_tp2) + " SL: " + str.tostring(long_sl))
+alertcondition(short_entry, "SHORT SIGNAL", "XAU/USD Short entry signal with TP1: " + 
+              str.tostring(short_tp1) + " TP2: " + str.tostring(short_tp2) + " SL: " + str.tostring(short_sl))
+
+// === PAPER TRADING JOURNAL NOTES ===
+// Add this as a comment for your trading journal
+// Trade ID: [DATE] - [SIGNAL TYPE] - [ENTRY PRICE] - [REASON]
+// Entry Reason: Check confluence of: trend, momentum, S/R, session, regime
+// Exit Reason: TP1 hit (50%), TP2 hit (50%), or SL hit
+// Notes: Market conditions, news events, emotional state
