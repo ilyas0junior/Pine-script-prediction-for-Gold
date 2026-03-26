@@ -1,4 +1,4 @@
-#okey let's gooooooo
+<Bold>#okey let's goooooo</Bold></br>
 But here's the truth about this "Perfect Entry" script for Gold:
 
 What it actually is:
