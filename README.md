@@ -1,4 +1,6 @@
 <Bold>#okey let's goooooo</Bold></br>
+
+So in the begining i will give u a difinition nd tell u the news about this project
 But here's the truth about this "Perfect Entry" script for Gold:
 
 What it actually is:
